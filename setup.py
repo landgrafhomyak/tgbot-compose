@@ -11,6 +11,7 @@ setup(
             name="api_types",
             sources=[
                 "src/api_types/__init__.c",
+                "src/api_types/bases.c",
                 "src/api_types/property.c",
                 "src/api_types/User.c"
             ]

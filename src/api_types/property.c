@@ -44,6 +44,8 @@ static PyObject *Property_GetIsMutable(Property_Object *self, void *closure);
 
 static void Property_Dealloc(Property_Object *self);
 
+static PyObject *Property_Repr(Property_Object *self);
+
 PyMemberDef Property_Members[] = {
         {"__name__",      T_STRING,    offsetof(Property_Object, name),          READONLY},
         {"value_type",    T_OBJECT_EX, offsetof(Property_Object, value_type),    READONLY},
@@ -61,13 +63,14 @@ PyGetSetDef Property_GetSet[] = {
 PyTypeObject Property_Type = {
         PyVarObject_HEAD_INIT(NULL, 0)
         .tp_name = "tgbot_compose.api_types._property",
-//        .tp_basicsize = sizeof(Property_Object),
-//        .tp_call = (ternaryfunc) Property_Call,
-//        .tp_descr_get = (descrgetfunc) Property_Get,
-//        .tp_descr_set = (descrsetfunc) Property_Set,
-//        .tp_members = Property_Members,
-//        .tp_getset = Property_GetSet,
-//        .tp_dealloc = (destructor) Property_Dealloc
+        .tp_basicsize = sizeof(Property_Object),
+        .tp_call = (ternaryfunc) Property_Call,
+        .tp_descr_get = (descrgetfunc) Property_Get,
+        .tp_descr_set = (descrsetfunc) Property_Set,
+        .tp_members = Property_Members,
+        .tp_getset = Property_GetSet,
+        .tp_dealloc = (destructor) Property_Dealloc,
+        .tp_repr = (reprfunc) Property_Repr
 };
 
 #if 0
@@ -218,6 +221,18 @@ static PyObject *Property_GetIsMutable(Property_Object *self, void *closure)
 
 static void Property_Dealloc(Property_Object *self)
 {}
+
+static PyObject *Property_Repr(Property_Object *self)
+{
+    return PyUnicode_FromFormat(
+            "<%s descriptor object %s %s value=`%s` instance=`%s`>",
+            Property_Type.tp_name,
+            (self->optional ? "optional" : "required"),
+            (self->mutable ? "mutable" : "immutable"),
+            self->value_type->tp_name,
+            self->instance_type->tp_name
+    );
+}
 
 
 PyObject *Parse_ArgsKwargsToDict(

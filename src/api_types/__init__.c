@@ -16,6 +16,7 @@ PyMODINIT_FUNC PyInit_api_types(void)
     ifNullRet(module = PyModule_Create(&module_def));
 
     init_file(Property);
+    init_file(Bases);
     init_file(User);
 
     return module;

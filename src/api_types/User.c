@@ -1,6 +1,7 @@
 #include <Python.h>
 #include "macro.h"
 #include "__init__.h"
+#include "bases.h"
 #include "property.h"
 
 typedef struct User_Object
@@ -33,14 +34,15 @@ typedef struct BotSelfUser_Object
 
 static User_Object *User_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs);
 
-
 static void User_Dealloc(User_Object *self);
 
 static PyObject *User_GetIsBot(User_Object *self, void *closure);
 
+static PyObject *User_GetFullName(User_Object *self, void *closure);
 
 static PyGetSetDef User_GetSet[] = {
-        {"is_bot", (getter) User_GetIsBot, NULL},
+        {"is_bot",    (getter) User_GetIsBot,    NULL},
+        {"full_name", (getter) User_GetFullName, NULL},
         {NULL}
 };
 
@@ -66,6 +68,7 @@ static RealUser_Object *RealUser_New(PyTypeObject *cls, PyObject *args, PyObject
 
 static void RealUser_Dealloc(RealUser_Object *self);
 
+static PyObject *RealUser_Repr(RealUser_Object *self);
 
 static PyTypeObject RealUser_Type = {
         PyVarObject_HEAD_INIT(NULL, 0)
@@ -73,18 +76,23 @@ static PyTypeObject RealUser_Type = {
         .tp_basicsize = sizeof(RealUser_Object),
         .tp_new = (newfunc) RealUser_New,
         .tp_dealloc = (destructor) RealUser_Dealloc,
-        .tp_base = &User_Type
+        .tp_base = &User_Type,
+        .tp_repr = (reprfunc) RealUser_Repr
 };
+
+static Property_Object RealUser_Meta[] = {
+        Property_SInit("last_name", 0, 1, offsetof(RealUser_Object, last_name), NULL),
+        Property_SInit("language_code", 0, 0, offsetof(RealUser_Object, language_code), NULL),
+        Property_ListEnd
+};
+
 
 static BotUser_Object *BotUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs);
 
 static void BotUser_Dealloc(BotUser_Object *self);
 
-static Property_Object RealUser_Meta[] = {
-        Property_SInit("last_name", 0, 1, offsetof(RealUser_Object, last_name), NULL),
-        Property_SInit("language_code", 0, 1, offsetof(RealUser_Object, language_code), NULL),
-        Property_ListEnd
-};
+static PyObject *BotUser_Repr(BotUser_Object *self);
+
 
 static PyTypeObject BotUser_Type = {
         PyVarObject_HEAD_INIT(NULL, 0)
@@ -92,18 +100,20 @@ static PyTypeObject BotUser_Type = {
         .tp_basicsize = sizeof(BotUser_Object),
         .tp_new = (newfunc) BotUser_New,
         .tp_dealloc = (destructor) BotUser_Dealloc,
-        .tp_base = &User_Type
+        .tp_base = &User_Type,
+        .tp_repr = (reprfunc) &BotUser_Repr
 };
 
 static Property_Object BotUser_Meta[] = {
-        Property_SInit("username", 0, 0, offsetof(User_Object, username), NULL),
+        Property_SInit("username", 0, 0, offsetof(BotUser_Object, common.username), NULL),
         Property_ListEnd
 };
 
 static BotUser_Object *BotSelfUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs);
 
-
 static void BotSelfUser_Dealloc(BotSelfUser_Object *self);
+
+static PyObject *BotSelfUser_Repr(BotSelfUser_Object *self);
 
 static PyTypeObject BotSelfUser_Type = {
         PyVarObject_HEAD_INIT(NULL, 0)
@@ -111,14 +121,15 @@ static PyTypeObject BotSelfUser_Type = {
         .tp_basicsize = sizeof(BotSelfUser_Object),
         .tp_new = (newfunc) BotSelfUser_New,
         .tp_dealloc = (destructor) BotSelfUser_Dealloc,
-        .tp_base = &BotUser_Type
+        .tp_base = &BotUser_Type,
+        .tp_repr = (reprfunc) BotSelfUser_Repr
 };
 
 
 static Property_Object BotSelfUser_Meta[] = {
-        Property_SInit("can_join_groups", 0, 0, offsetof(User_Object, username), NULL),
-        Property_SInit("can_read_all_group_messages", 0, 0, offsetof(User_Object, username), NULL),
-        Property_SInit("supports_inline_queries", 0, 0, offsetof(User_Object, username), NULL),
+        Property_SInit("can_join_groups", 0, 0, offsetof(BotSelfUser_Object, can_join_groups), NULL),
+        Property_SInit("can_read_all_group_messages", 0, 0, offsetof(BotSelfUser_Object, can_read_all_group_messages), NULL),
+        Property_SInit("supports_inline_queries", 0, 0, offsetof(BotSelfUser_Object, supports_inline_queries), NULL),
         Property_ListEnd
 };
 
@@ -206,14 +217,35 @@ static PyObject *User_GetIsBot(User_Object *self, void *closure)
     return NULL;
 }
 
+static PyObject *User_GetFullName(User_Object *self, void *closure)
+{
+    if (Py_TYPE(self) != &RealUser_Type)
+    {
+        if (Py_TYPE(self) != &BotUser_Type && Py_TYPE(self) != &BotSelfUser_Type)
+        {
+            PyErr_Format(PyExc_TypeError, "Full name can be obtained from instances of subclasses of `%s`", User_Type.tp_name);
+            return NULL;
+        }
+        return Py_NewRef(self->first_name);
+    }
+    else
+    {
+        ifNull(((RealUser_Object *) self)->last_name)
+        {
+            return Py_NewRef(self->first_name);
+        }
+        else
+        {
+            return PyUnicode_FromFormat("%s %s", self->first_name, ((RealUser_Object *) self)->last_name);
+        }
+    }
+}
+
 static RealUser_Object *RealUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
 {
     ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
 
-    if (check_is_bot(&User_Type, kwargs, Py_False))
-    {
-        return NULL;
-    }
+    ifNullRet(check_is_bot(&RealUser_Type, kwargs, Py_False));
 
     return RealUser_Create(kwargs);
 }
@@ -234,15 +266,33 @@ static void RealUser_Dealloc(RealUser_Object *self)
     Py_TYPE(self)->tp_free(self);
 }
 
+static PyObject *RealUser_Repr(RealUser_Object *self)
+{
+    PyObject *repr;
+    PyObject *full_name;
+
+    ifNullRet(full_name = User_GetFullName((User_Object *) self, NULL));
+
+    repr = PyUnicode_FromFormat(
+            "<%s object id=%S username=%V full_name=%R language_code=%R>",
+            RealUser_Type.tp_name,
+            self->common.id,
+            self->common.username,
+            "@",
+            full_name,
+            self->language_code
+    );
+
+    Py_DECREF(full_name);
+    return repr;
+}
+
+
 static BotUser_Object *BotUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
 {
     ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
 
-
-    if (check_is_bot(&User_Type, kwargs, Py_False))
-    {
-        return NULL;
-    }
+    ifNullRet(check_is_bot(&BotUser_Type, kwargs, Py_False));
 
     return BotUser_Create(kwargs);
 }
@@ -261,14 +311,22 @@ static void BotUser_Dealloc(BotUser_Object *self)
     Py_TYPE(self)->tp_free(self);
 }
 
+static PyObject *BotUser_Repr(BotUser_Object *self)
+{
+    return PyUnicode_FromFormat(
+            "<%s object id=%S username=%U name=%R>",
+            BotUser_Type.tp_name,
+            self->common.id,
+            self->common.username,
+            self->common.first_name
+    );
+}
+
 static BotUser_Object *BotSelfUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
 {
     ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
 
-    if (check_is_bot(&User_Type, kwargs, Py_False))
-    {
-        return NULL;
-    }
+    ifNullRet(check_is_bot(&BotSelfUser_Type, kwargs, Py_False));
 
     return (BotUser_Object *) Parse_DictToProperties(kwargs, ignore_names, &BotSelfUser_Type, 0, 3, User_Meta, BotUser_Meta, BotSelfUser_Meta);
 }
@@ -282,6 +340,21 @@ static void BotSelfUser_Dealloc(BotSelfUser_Object *self)
     Py_XDECREF(self->can_join_groups);
     Py_XDECREF(self->can_read_all_group_messages);
     Py_TYPE(self)->tp_free(self);
+}
+
+
+static PyObject *BotSelfUser_Repr(BotSelfUser_Object *self)
+{
+    return PyUnicode_FromFormat(
+            "<%s object id=%S username=%U name=%R%s%s%s>",
+            RealUser_Type.tp_name,
+            self->common.common.id,
+            self->common.common.username,
+            self->common.common.first_name,
+            (parsePyBool(self->can_join_groups) ? " in groups" : ""),
+            (parsePyBool(self->can_read_all_group_messages) ? " can read all" : ""),
+            (parsePyBool(self->supports_inline_queries) ? " with inline" : "")
+    );
 }
 
 FileInitFunction(User)
@@ -303,6 +376,8 @@ FileInitFunction(User)
     clsProps(RealUser_Type, RealUser_Meta);
     clsProps(BotUser_Type, BotUser_Meta);
     clsProps(BotSelfUser_Type, BotSelfUser_Meta);
+
+    apiType(User_Type);
 
     chkType(User_Type);
     chkType(RealUser_Type);

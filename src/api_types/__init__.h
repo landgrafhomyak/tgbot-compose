@@ -11,7 +11,7 @@
 # define FileInitFunction(NAME) int (Init_ ## NAME)(PyObject *module)
 
 FileInitFunction(Property);
-
+FileInitFunction(Bases);
 FileInitFunction(User);
 
 #endif /* API_TYPES___INIT___H */

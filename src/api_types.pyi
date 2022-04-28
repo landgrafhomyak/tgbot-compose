@@ -63,7 +63,7 @@ class User:
             id: int,
             first_name: str,
             last_name: str | None = None,
-            language_code: str | None = None
+            language_code: str
     ) -> RealUser: ...
 
     @overload
@@ -110,7 +110,7 @@ class RealUser(User):
             first_name: str,
             last_name: str | None = None,
             username: str | None = None,
-            language_code: str | None = None
+            language_code: str
     ) -> RealUser: ...
 
     @property
