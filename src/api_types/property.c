@@ -1,5 +1,8 @@
+#include <stddef.h>
+
 #include <Python.h>
 #include <structmember.h>
+
 #include "macro.h"
 #include "__init__.h"
 #include "property.h"

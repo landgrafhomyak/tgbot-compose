@@ -50,6 +50,8 @@ PyObject *Parse_DictToProperties(
 
 int Property_StoreToClass(PyTypeObject *cls, Property_Object *array);
 
-#define clsProps(CLASS_SCALAR, ARRAY) if ((Property_StoreToClass(&(CLASS_SCALAR), (ARRAY)))) { return 1; } ((void)0)
+# define clsProps(CLASS_SCALAR, ARRAY) if ((Property_StoreToClass(&(CLASS_SCALAR), (ARRAY)))) { return 1; } ((void)0)
+
+//# define addJson(DESTINATION, )
 
 #endif /* API_TYPES_PROPERTY_H */

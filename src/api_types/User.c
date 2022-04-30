@@ -1,4 +1,7 @@
+#include <stddef.h>
+
 #include <Python.h>
+
 #include "macro.h"
 #include "__init__.h"
 #include "bases.h"

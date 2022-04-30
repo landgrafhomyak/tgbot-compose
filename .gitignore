@@ -1,5 +1,6 @@
 *build*/
 .idea/
-CMakeLists.txt
 *.egg-info/
 venv/
+.run/
+_cmake_test_compile/
