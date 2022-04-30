@@ -1,6 +1,9 @@
-
 #ifndef API_TYPES___INIT___H
 # define API_TYPES___INIT___H
+
+# ifdef __cplusplus
+extern "C" {
+# endif
 
 # include <Python.h>
 # include "macro.h"
@@ -11,7 +14,13 @@
 # define FileInitFunction(NAME) int (Init_ ## NAME)(PyObject *module)
 
 FileInitFunction(Property);
+
 FileInitFunction(Bases);
+
 FileInitFunction(User);
+
+# ifdef __cplusplus
+};
+# endif
 
 #endif /* API_TYPES___INIT___H */

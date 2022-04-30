@@ -1,6 +1,10 @@
 #ifndef API_TYPES_PROPERTY_H
 # define API_TYPES_PROPERTY_H
 
+# ifdef __cplusplus
+extern "C" {
+# endif
+
 # include <Python.h>
 
 typedef struct Property_Object
@@ -53,5 +57,9 @@ int Property_StoreToClass(PyTypeObject *cls, Property_Object *array);
 # define clsProps(CLASS_SCALAR, ARRAY) if ((Property_StoreToClass(&(CLASS_SCALAR), (ARRAY)))) { return 1; } ((void)0)
 
 //# define addJson(DESTINATION, )
+
+# ifdef __cplusplus
+};
+# endif
 
 #endif /* API_TYPES_PROPERTY_H */

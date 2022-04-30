@@ -7,16 +7,17 @@ py_module(
         api_types
 
         ./macro.h
+        ./macro.hpp
         ./__init__.c
         ./__init__.h
         ./dict.cpp
         ./dict.hpp
         ./property.c
-        #       ./property.hpp
+        # ./property.hpp
         ./property.h
         ./bases.c
         ./bases.h
-        ./User.c
+        # ./User.c
         ./User.cpp
 )
 
