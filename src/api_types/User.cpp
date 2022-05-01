@@ -2,7 +2,9 @@
 
 #include <initializer_list>
 
+extern "C" {
 #include <Python.h>
+};
 
 #include "macro.h"
 #include "__init__.h"
@@ -129,7 +131,7 @@ static constexpr DictMeta User_Meta(
 static constexpr DictMeta RealUser_Meta(
         RealUser_Type,
         &User_Meta,
-        DictMeta::DictMeta_InputEntry{.name = "is_bot", .offset=(size_t) -1, .required_type=PyBool_Type, .default_value_getter=FalseGetter},
+        def(is_bot, PyBool_Type, FalseGetter),
         prop(last_name, RealUser_Object, PyUnicode_Type, DictMeta_GetNone),
         prop(language_code, RealUser_Object, PyUnicode_Type, DictMeta_GetNone)
 );
@@ -137,7 +139,7 @@ static constexpr DictMeta RealUser_Meta(
 static constexpr DictMeta BotUser_Meta(
         BotUser_Type,
         &User_Meta,
-        DictMeta::DictMeta_InputEntry{.name = "is_bot", .offset=(size_t) -1, .required_type=PyBool_Type, .default_value_getter=TrueGetter},
+        def(is_bot, PyBool_Type, TrueGetter),
         prop(username, BotUser_Object, PyUnicode_Type, nullptr)
 );
 static constexpr DictMeta BotSelfUser_Meta(
