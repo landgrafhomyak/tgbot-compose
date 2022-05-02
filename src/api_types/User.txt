@@ -1,0 +1,53 @@
+abstract class User_Type[User_Object] {
+    @ is_bot : PyBool_Type
+        get {
+            if (Py_Type(self) == &BotUser_Type)
+                Py_RETURN_TRUE;
+            else if (Py_Type(self) == &RealUser_Type)
+                Py_RETURN_FALSE;
+            else {
+                PyErr_Format(
+                    PyExc_TypeError,
+                    "To check that user bot or not, self must be `%s` or `%s` or it subclasses",
+                    BotUser_Type.tp_name,
+                    RealUser_Type.tp_name
+                );
+                return NULL;
+            }
+        }
+
+    @ first_name : PyUnicode_Type
+
+    @ username : PyUnicode_Type?
+}
+
+class RealUser_Type[RealUser_Object] <- User_Type {
+    @ is_bot : PyBool_Type
+        check {
+            return value == Py_False;
+        }
+        get {
+            Py_RETURN_FALSE;
+        }
+
+    @ last_name : PyUnicode_Type?
+    @ language_code : PyUnicode_Type?
+}
+
+class BotUser_Type[BotUser_Object] <- User_Type {
+    @ is_bot : PyBool_Type
+        check {
+            return value == Py_True;
+        }
+        get {
+            Py_RETURN_TRUE;
+        }
+
+    @ username : PyUnicode_Type
+}
+
+class BotSelfUser_Type[BotSelfUser_Object] <- User_Type {
+    @ can_join_groups : PyBool_Type
+    @ can_read_all_group_messages : PyBool_Type
+    @ supports_inline_queries : PyBool_Type
+}

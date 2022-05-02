@@ -1,7 +1,12 @@
 project(api_types C CXX)
 
 set(CMAKE_C_STANDARD 99)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 11)
+
+add_executable(
+        api_types__generator
+        ./generator.cpp
+)
 
 py_module(
         api_types
