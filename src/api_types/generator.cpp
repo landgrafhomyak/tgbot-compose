@@ -7,6 +7,10 @@
 #include <utility>
 #include <vector>
 #include <stack>
+#include <cstdint>
+#include <ios>
+#include <set>
+#include "generator.h"
 
 class ParseError : public std::exception
 {
@@ -47,6 +51,16 @@ public:
     {
         return this->start == nullptr;
     }
+
+    inline bool operator==(string const &other) const noexcept
+    {
+        return this->size == other.size && strncmp(this->start, other.start, this->size) == 0;
+    }
+
+    inline bool operator<(string const &other) const noexcept
+    {
+        return strncmp(this->start, other.start, std::max(this->size, other.size)) < 0;
+    }
 };
 
 template<typename T>
@@ -79,6 +93,7 @@ class PropertyDef
 {
 public:
     string name;
+    string accessor;
     string type_name;
     bool is_optional;
     string object_name;
@@ -87,6 +102,7 @@ public:
 
     inline PropertyDef(
             string name,
+            string accessor,
             string type_name,
             bool is_optional,
             string object_name,
@@ -94,6 +110,7 @@ public:
             string getter = string(nullptr)
     ) noexcept:
             name(name),
+            accessor(accessor),
             type_name(type_name),
             is_optional(is_optional),
             object_name(object_name),
@@ -105,17 +122,20 @@ public:
 class ClassDef
 {
 public:
+    string prefix;
     string type_name;
     string object_name;
     string base;
     std::vector<PropertyDef> properties;
 
     inline ClassDef(
+            string prefix,
             string type_name,
             string object_name,
             string base,
             std::vector<PropertyDef> properties
     ) noexcept:
+            prefix(prefix),
             type_name(type_name),
             object_name(object_name),
             base(base),
@@ -189,7 +209,7 @@ private:
         {
             c = *(this->p);
 
-            if (c == '_')
+            if (c == '_' || c == '.')
             { goto next; }
 
             if ('0' <= c && c <= '9')
@@ -331,12 +351,31 @@ static Definitions parse(char const *source)
         if (!t.assert_keyword(" "))
         { t.error("After keyword 'class' must be whitespace"); }
         string class_name = t.get_symbol();
-        string object_name = (t.assert_keyword("[") ? t.get_symbol() : string());
-        if (!object_name.isNull() && !t.assert_keyword("]"))
-        { t.error("Missed ] after object name"); }
+        if (!t.assert_keyword(" "))
+        { t.error("After class name must be whitespace"); }
+        if (!t.assert_keyword("["))
+        { t.error("Missed [ after class name"); }
+        string typeobj_name = t.get_symbol();
+        string object_name = (!t.assert_keyword(",") ? string(nullptr) : (t.assert_keyword(" ") ? t.get_symbol() : (t.error("Before object struct name must whitespace"), string(nullptr))));
+        if (!t.assert_keyword("]"))
+        { t.error("Missed ] after typeobj (object) name"); }
         if (!t.assert_keyword(" "))
         { t.error("After class name (or object bind) must be whitespace"); }
         string base = (!t.assert_keyword("<-") ? string(nullptr) : (t.assert_keyword(" ") ? t.get_symbol() : (t.error("After <- must be whitespace"), string(nullptr))));
+        auto properties = std::vector<PropertyDef>();
+        if (!base.isNull())
+        {
+            for (auto cls: classes)
+            {
+                if (base == cls.prefix)
+                {
+                    // properties.insert(properties.begin(), cls.properties.begin(), cls.properties.end());
+                    goto BASE_FOUND;
+                }
+            }
+            t.error("Base class not found");
+        }
+        BASE_FOUND:
         if (!base.isNull() && !t.assert_keyword(" "))
         { t.error("After base class must be whitespace"); }
         if (!t.assert_keyword("{"))
@@ -344,7 +383,6 @@ static Definitions parse(char const *source)
         t.skip_whitespaces();
         if (!t.assert_keyword("\n"))
         { t.error("Missed newline at start of class body"); }
-        auto properties = std::vector<PropertyDef>();
         while (true)
         {
             if (t.assert_keyword("    "))
@@ -362,6 +400,15 @@ static Definitions parse(char const *source)
             string property_name = t.get_symbol();
             if (!t.assert_keyword(" "))
             { t.error("After property name must be whitespace"); }
+            string property_custom_access = (!t.assert_keyword("[") ? property_name :
+                                             [&]() {
+                                                 string v = t.get_symbol();
+                                                 if (!t.assert_keyword("]"))
+                                                 { t.error("Missed ] after property accessor"); }
+                                                 if (!t.assert_keyword(" "))
+                                                 { t.error("After property accessor must be whitespace"); }
+                                                 return v;
+                                             }());
             if (!t.assert_keyword(":"))
             { t.error("Missed : between property name and type"); }
             if (!t.assert_keyword(" "))
@@ -375,7 +422,7 @@ static Definitions parse(char const *source)
             { t.error("After property type (or object) must be newline"); }
             if (!t.assert_keyword("        "))
             {
-                properties.emplace_back(property_name, property_type_name, is_optional, property_object_name);
+                properties.emplace_back(property_name, property_custom_access, property_type_name, is_optional, property_object_name);
                 continue;
             }
             string validator = t.get_property_member("check");
@@ -383,14 +430,14 @@ static Definitions parse(char const *source)
             {
                 if (!t.assert_keyword("        "))
                 {
-                    properties.emplace_back(property_name, property_type_name, is_optional, property_object_name, validator);
+                    properties.emplace_back(property_name, property_custom_access, property_type_name, is_optional, property_object_name, validator);
                     continue;
                 }
             }
             string getter = t.get_property_member("get");
-            properties.emplace_back(property_name, property_type_name, is_optional, property_object_name, validator, getter);
+            properties.emplace_back(property_name, property_custom_access, property_type_name, is_optional, property_object_name, validator, getter);
         }
-        classes.emplace_back(class_name, object_name, base, properties);
+        classes.emplace_back(class_name, typeobj_name, object_name, base, properties);
         t.skip_whitespaces();
         if (!t.assert_keyword("\n"))
         {
@@ -410,24 +457,118 @@ static Definitions parse(char const *source)
     return Definitions(includes, macros, classes);
 }
 
+std::ostream &operator<<(std::ostream &os, string s)
+{
+    return os.write(s.start, std::streamsize(s.size));
+}
+
+static inline string tonopo(string s)
+{
+    if (s.isNull())
+    { return string("PyObject"); }
+    else
+    { return s; }
+}
+
+template<size_t fun_type_size>
+static inline std::ostream &fun_name(std::ostream &out, string prefix, char const (&type)[fun_type_size], string name)
+{
+    auto hash_string_cropped = std::string(prefix.start, prefix.size);
+    return out << "_" << hash_string(hash_string_cropped.c_str()) << "_" << type << "_" << name;
+}
+
+static void generate(Definitions defs, std::ostream &out)
+{
+    for (auto include: defs.includes)
+    {
+        out << "#include " << include.path << std::endl;
+    }
+    for (auto macro: defs.macros)
+    {}
+
+    out << "#include \"generator.h\"" << std::endl;
+
+    for (auto cls: defs.classes)
+    {
+        auto prefix_hash_source = std::string(cls.prefix.start, cls.prefix.size);
+        uint64_t prefix_hash = hash_string(prefix_hash_source.c_str());
+        auto existing_properties = std::set<string>();
+        for (auto property: cls.properties)
+        {
+            out << "static " << tonopo(property.type_name) << " const * ";
+            fun_name(out, cls.prefix, "get", property.name);
+            out << "(" << tonopo(cls.type_name) << " const * self, void *_)";
+            out << std::endl;
+            if (!property.getter.isNull())
+            { out << "{" << property.getter << "}" << std::endl; }
+            else
+            {
+                out << "{" << std::endl;
+                out << "    PyObject const *value = (PyObject const *)(((uintptr_t)self) + offsetof(" << tonopo(cls.object_name) << ", " << property.accessor << "));" << std::endl;
+                out << "    if (value == NULL)" << std::endl;
+                if (property.is_optional)
+                { out << "        Py_RETURN_NONE;" << std::endl; }
+                else
+                {
+                    out << "    {" << std::endl;
+                    out << "        PyErr_Format(PyExc_RuntimeError, \"Value of property `" << property.name << "` was lost\");" << std::endl;
+                    out << "        return NULL;" << std::endl;
+                    out << "    }" << std::endl;
+                }
+                out << "    else" << std::endl;
+                out << "        return Py_NewRef(value);" << std::endl;
+                out << "}" << std::endl;
+            }
+        }
+        out << "#define " << cls.prefix << "_GENERATED_GETSET \\" << std::endl;
+        ClassDef bcls = cls;
+        while (true)
+        {
+            for (auto property: bcls.properties)
+            {
+                if (existing_properties.count(property.name) > 0)
+                {
+                    continue;
+                }
+                existing_properties.insert(property.name);
+                out << "{\"" << property.name << "\", (getter)";
+                fun_name(out, bcls.prefix, "get", property.name) << ", NULL, NULL}, \\" << std::endl;
+            }
+            if (bcls.base.isNull())
+            { break; }
+            for (auto obcls: defs.classes)
+            {
+                if (obcls.prefix == bcls.base)
+                {
+                    bcls = obcls;
+                    break;
+                }
+            }
+        }
+
+
+        out << std::endl;
+
+    }
+}
 
 int main(int argc, char const *argv[])
 {
-    if (argc < 2)
+    if (argc < 3)
     {
-        std::cerr << "No input files" << std::endl;
+        std::cerr << "No input and output files" << std::endl;
         return -1;
     }
 
-    if (argc > 2)
+    if (argc > 3)
     {
         std::cerr << "Too many arguments" << std::endl;
         return -2;
     }
 
-    std::ifstream t(argv[1]);
+    std::ifstream in(argv[1]);
     std::stringstream buffer;
-    buffer << t.rdbuf();
+    buffer << in.rdbuf();
     std::string source = buffer.str();
     Definitions data;
     try
@@ -478,8 +619,12 @@ int main(int argc, char const *argv[])
         std::cerr << err.what() << std::endl;
         return 1;
     }
+    in.close();
 
+    std::ofstream out(argv[2]);
+    generate(data, out);
 
+    out.close();
 
     return 0;
 }

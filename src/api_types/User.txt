@@ -1,4 +1,4 @@
-abstract class User_Type[User_Object] {
+abstract class User [User_Type, User_Object] {
     @ is_bot : PyBool_Type
         get {
             if (Py_Type(self) == &BotUser_Type)
@@ -16,12 +16,14 @@ abstract class User_Type[User_Object] {
             }
         }
 
+    @ id : PyLong_Type
+
     @ first_name : PyUnicode_Type
 
     @ username : PyUnicode_Type?
 }
 
-class RealUser_Type[RealUser_Object] <- User_Type {
+class RealUser [RealUser_Type, RealUser_Object] <- User {
     @ is_bot : PyBool_Type
         check {
             return value == Py_False;
@@ -34,7 +36,7 @@ class RealUser_Type[RealUser_Object] <- User_Type {
     @ language_code : PyUnicode_Type?
 }
 
-class BotUser_Type[BotUser_Object] <- User_Type {
+class BotUser [BotUser_Type, BotUser_Object] <- User {
     @ is_bot : PyBool_Type
         check {
             return value == Py_True;
@@ -43,10 +45,10 @@ class BotUser_Type[BotUser_Object] <- User_Type {
             Py_RETURN_TRUE;
         }
 
-    @ username : PyUnicode_Type
+    @ username [common.username] : PyUnicode_Type
 }
 
-class BotSelfUser_Type[BotSelfUser_Object] <- User_Type {
+class BotSelfUser [BotSelfUser_Type, BotSelfUser_Object] <- BotUser {
     @ can_join_groups : PyBool_Type
     @ can_read_all_group_messages : PyBool_Type
     @ supports_inline_queries : PyBool_Type
