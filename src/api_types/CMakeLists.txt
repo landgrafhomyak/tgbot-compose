@@ -27,7 +27,7 @@ py_module(
         ./__init__.h
         # ./dict.cpp
         # ./dict.hpp
-        ./generator.h
+        serialization.h
         ./property.c
         # ./property.hpp
         ./property.h
@@ -39,7 +39,3 @@ py_module(
 )
 
 add_dependencies(api_types api_types__generator)
-
-install(
-        TARGETS api_types DESTINATION ./
-)

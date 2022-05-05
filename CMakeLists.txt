@@ -29,3 +29,8 @@ else ()
 endif ()
 
 add_subdirectory(./src/api_types)
+
+
+install(
+        TARGETS api_types DESTINATION ${PYTHON_RELATIVE_SITE_PACKAGES_DIR}/tgbot_compose/
+)

@@ -1,24 +1,29 @@
+#include <cstdint>
+#include <cstring>
+#include <exception>
 #include <iostream>
 #include <string>
 #include <sstream>
 #include <fstream>
-#include <exception>
 #include <iomanip>
 #include <utility>
 #include <vector>
 #include <stack>
-#include <cstdint>
 #include <ios>
 #include <set>
-#include "generator.h"
+#include <algorithm>
 
-class ParseError : public std::exception
+#define NO_PYTHON
+
+#include "serialization.h"
+
+class ParseError : public std::runtime_error
 {
 public:
     size_t pos;
 
     ParseError(size_t pos, char const *message) noexcept:
-            std::exception(message),
+            std::runtime_error(message),
             pos(pos)
     {}
 };
@@ -95,6 +100,7 @@ public:
     string name;
     string accessor;
     string type_name;
+    bool is_virtual;
     bool is_optional;
     string object_name;
     string validator;
@@ -104,6 +110,7 @@ public:
             string name,
             string accessor,
             string type_name,
+            bool is_virtual,
             bool is_optional,
             string object_name,
             string validator = string(nullptr),
@@ -112,6 +119,7 @@ public:
             name(name),
             accessor(accessor),
             type_name(type_name),
+            is_virtual(is_virtual),
             is_optional(is_optional),
             object_name(object_name),
             validator(validator),
@@ -123,19 +131,22 @@ class ClassDef
 {
 public:
     string prefix;
+    bool is_abstract;
     string type_name;
     string object_name;
-    string base;
+    ClassDef const *base;
     std::vector<PropertyDef> properties;
 
     inline ClassDef(
             string prefix,
+            bool is_abstract,
             string type_name,
             string object_name,
-            string base,
+            ClassDef const *base,
             std::vector<PropertyDef> properties
     ) noexcept:
             prefix(prefix),
+            is_abstract(is_abstract),
             type_name(type_name),
             object_name(object_name),
             base(base),
@@ -148,12 +159,12 @@ class Definitions
 public:
     std::vector<IncludeDef> includes;
     std::vector<MacroDef> macros;
-    std::vector<ClassDef> classes;
+    std::vector<ClassDef const *> classes;
 
     inline Definitions(
             std::vector<IncludeDef> includes,
             std::vector<MacroDef> macros,
-            std::vector<ClassDef> classes
+            std::vector<ClassDef const *> classes
     ) noexcept:
             includes(std::move(includes)),
             macros(std::move(macros)),
@@ -286,22 +297,23 @@ private:
         return value;
     }
 
-    friend Definitions parse(char const *source);
 
     inline bool isEnd()
     {
         return *(this->p) == 0;
     }
 
+public:
+    friend Definitions parse(char const *source);
 };
 
-static Definitions parse(char const *source)
+Definitions parse(char const *source)
 {
     auto t = Tokenizer(source);
 
     auto includes = std::vector<IncludeDef>();
     auto macros = std::vector<MacroDef>();
-    auto classes = std::vector<ClassDef>();
+    auto classes = std::vector<ClassDef const *>();
     bool is_preprocessor_section_used = false;
 
     while (true)
@@ -361,23 +373,25 @@ static Definitions parse(char const *source)
         { t.error("Missed ] after typeobj (object) name"); }
         if (!t.assert_keyword(" "))
         { t.error("After class name (or object bind) must be whitespace"); }
-        string base = (!t.assert_keyword("<-") ? string(nullptr) : (t.assert_keyword(" ") ? t.get_symbol() : (t.error("After <- must be whitespace"), string(nullptr))));
+        string base_n = (!t.assert_keyword("<-") ? string(nullptr) : (t.assert_keyword(" ") ? t.get_symbol() : (t.error("After <- must be whitespace"), string(nullptr))));
         auto properties = std::vector<PropertyDef>();
-        if (!base.isNull())
+        ClassDef const *base = nullptr;
+        if (!base_n.isNull())
         {
-            for (auto cls: classes)
+            for (auto base_i: classes)
             {
-                if (base == cls.prefix)
+                if (base_n == base_i->prefix)
                 {
+                    base = base_i;
                     // properties.insert(properties.begin(), cls.properties.begin(), cls.properties.end());
                     goto BASE_FOUND;
                 }
             }
             t.error("Base class not found");
+            BASE_FOUND:
+            if (!base_n.isNull() && !t.assert_keyword(" "))
+            { t.error("After base class must be whitespace"); }
         }
-        BASE_FOUND:
-        if (!base.isNull() && !t.assert_keyword(" "))
-        { t.error("After base class must be whitespace"); }
         if (!t.assert_keyword("{"))
         { t.error("Missed { at start of class body"); }
         t.skip_whitespaces();
@@ -393,8 +407,13 @@ static Definitions parse(char const *source)
             if (t.assert_keyword("}"))
             { break; }
             PROPERTY:
+            bool is_virtual = false;
             if (!t.assert_keyword("@"))
-            { t.error("Missed @ before property declaration"); }
+            {
+                if (!t.assert_keyword("~"))
+                { t.error("Missed @ or ~ before property declaration"); }
+                is_virtual = true;
+            }
             if (!t.assert_keyword(" "))
             { t.error("After @ must be whitespace"); }
             string property_name = t.get_symbol();
@@ -422,7 +441,7 @@ static Definitions parse(char const *source)
             { t.error("After property type (or object) must be newline"); }
             if (!t.assert_keyword("        "))
             {
-                properties.emplace_back(property_name, property_custom_access, property_type_name, is_optional, property_object_name);
+                properties.emplace_back(property_name, property_custom_access, property_type_name, is_virtual, is_optional, property_object_name);
                 continue;
             }
             string validator = t.get_property_member("check");
@@ -430,14 +449,14 @@ static Definitions parse(char const *source)
             {
                 if (!t.assert_keyword("        "))
                 {
-                    properties.emplace_back(property_name, property_custom_access, property_type_name, is_optional, property_object_name, validator);
+                    properties.emplace_back(property_name, property_custom_access, property_type_name, is_virtual, is_optional, property_object_name, validator);
                     continue;
                 }
             }
             string getter = t.get_property_member("get");
-            properties.emplace_back(property_name, property_custom_access, property_type_name, is_optional, property_object_name, validator, getter);
+            properties.emplace_back(property_name, property_custom_access, property_type_name, is_virtual, is_optional, property_object_name, validator, getter);
         }
-        classes.emplace_back(class_name, typeobj_name, object_name, base, properties);
+        classes.push_back(new ClassDef(class_name, is_abstract, typeobj_name, object_name, base, properties));
         t.skip_whitespaces();
         if (!t.assert_keyword("\n"))
         {
@@ -477,7 +496,78 @@ static inline std::ostream &fun_name(std::ostream &out, string prefix, char cons
     return out << "_" << hash_string(hash_string_cropped.c_str()) << "_" << type << "_" << name;
 }
 
-static void generate(Definitions defs, std::ostream &out)
+class inherit_props
+{
+private:
+    ClassDef const *cls;
+    std::vector<PropertyDef>::const_iterator pos;
+    std::vector<PropertyDef>::const_iterator end_pos;
+    std::set<string> processed_keys;
+
+public:
+    class PropertyDefWithOwner : public PropertyDef
+    {
+    public:
+        ClassDef const *owner;
+
+        PropertyDefWithOwner(PropertyDef const *value, ClassDef const *owner) noexcept:
+                PropertyDef(*value),
+                owner(owner)
+        {}
+    };
+
+    inherit_props(ClassDef const *cls) noexcept:
+            cls(cls),
+            pos(cls->properties.begin()),
+            end_pos(cls->properties.end())
+    {}
+
+    inherit_props operator++()
+    {
+        while (this->cls != nullptr)
+        {
+            for (; this->pos != this->end_pos; this->pos++)
+            {
+                if (this->processed_keys.count(this->pos->name) > 0)
+                { continue; }
+                this->processed_keys.insert(this->pos->name);
+                goto RET;
+            }
+            this->cls = this->cls->base;
+            if (this->cls != nullptr)
+            {
+                this->pos = this->cls->properties.begin();
+                this->end_pos = this->cls->properties.end();
+            }
+        }
+        RET:
+        return *this;
+    }
+
+    PropertyDefWithOwner operator*()
+    {
+        this->processed_keys.insert(this->pos->name);
+        return PropertyDefWithOwner(&*(this->pos), this->cls);
+    }
+
+    inherit_props const &end() const noexcept
+    {
+        return *this;
+    }
+
+    inherit_props &begin() noexcept
+    {
+        return *this;
+    }
+
+    bool operator!=(inherit_props const &other)
+    {
+        return this->cls != nullptr;
+    }
+};
+
+
+static void generate(Definitions const &defs, std::ostream &out)
 {
     for (auto include: defs.includes)
     {
@@ -486,25 +576,24 @@ static void generate(Definitions defs, std::ostream &out)
     for (auto macro: defs.macros)
     {}
 
-    out << "#include \"generator.h\"" << std::endl;
+    out << "#include \"serialization.h\"" << std::endl;
 
     for (auto cls: defs.classes)
     {
-        auto prefix_hash_source = std::string(cls.prefix.start, cls.prefix.size);
+        auto prefix_hash_source = std::string(cls->prefix.start, cls->prefix.size);
         uint64_t prefix_hash = hash_string(prefix_hash_source.c_str());
-        auto existing_properties = std::set<string>();
-        for (auto property: cls.properties)
+
+        for (auto property: cls->properties)
         {
-            out << "static " << tonopo(property.type_name) << " const * ";
-            fun_name(out, cls.prefix, "get", property.name);
-            out << "(" << tonopo(cls.type_name) << " const * self, void *_)";
-            out << std::endl;
+            out << "static " << tonopo(property.object_name) << " const * ";
+            fun_name(out, cls->prefix, "get", property.name);
+            out << "(" << tonopo(cls->object_name) << " const * self, void *_)" << std::endl;
             if (!property.getter.isNull())
             { out << "{" << property.getter << "}" << std::endl; }
             else
             {
                 out << "{" << std::endl;
-                out << "    PyObject const *value = (PyObject const *)(((uintptr_t)self) + offsetof(" << tonopo(cls.object_name) << ", " << property.accessor << "));" << std::endl;
+                out << "    PyObject const *value = (PyObject const *)(((uintptr_t)self) + offsetof(" << tonopo(cls->object_name) << ", " << property.accessor << "));" << std::endl;
                 out << "    if (value == NULL)" << std::endl;
                 if (property.is_optional)
                 { out << "        Py_RETURN_NONE;" << std::endl; }
@@ -519,38 +608,124 @@ static void generate(Definitions defs, std::ostream &out)
                 out << "        return Py_NewRef(value);" << std::endl;
                 out << "}" << std::endl;
             }
-        }
-        out << "#define " << cls.prefix << "_GENERATED_GETSET \\" << std::endl;
-        ClassDef bcls = cls;
-        while (true)
-        {
-            for (auto property: bcls.properties)
+            out << "static inline int ";
+            fun_name(out, cls->prefix, "check", property.name) << "(" << tonopo(property.object_name) << " const * value)" << std::endl;
+            if (!property.validator.isNull())
+            { out << "{" << property.validator << "}" << std::endl; }
+            else
             {
-                if (existing_properties.count(property.name) > 0)
-                {
-                    continue;
-                }
-                existing_properties.insert(property.name);
-                out << "{\"" << property.name << "\", (getter)";
-                fun_name(out, bcls.prefix, "get", property.name) << ", NULL, NULL}, \\" << std::endl;
+                out << "{" << std::endl;
+                out << "    return PyType_IsSubtype(Py_TYPE(value), &" << property.type_name << ");" << std::endl;
+                out << "}" << std::endl;
             }
-            if (bcls.base.isNull())
-            { break; }
-            for (auto obcls: defs.classes)
-            {
-                if (obcls.prefix == bcls.base)
-                {
-                    bcls = obcls;
-                    break;
-                }
-            }
+            out << "static int ";
+            fun_name(out, cls->prefix, "converter", property.name) << "(" << tonopo(property.object_name) << " const * value, " << tonopo(property.object_name) << " **storage)" << std::endl;
+            out << "{" << std::endl;
+            out << "    if (value == NULL)" << std::endl;
+            out << "    { Py_DECREF(*storage); return 1; }" << std::endl;
+            out << "    if (!";
+            fun_name(out, cls->prefix, "check", property.name) << "(value))" << std::endl;
+            out << "    {" << std::endl;
+            out << "        PyErr_Format(PyExc_TypeError, \"`" << property.name << "` must be `%s` or its subclass, got `%s`\", " << property.type_name << ".tp_name, Py_TYPE(value)->tp_name);" << std::endl;
+            out << "        return 0;" << std::endl;
+            out << "    }" << std::endl;
+            out << "    *storage = Py_NewRef(value);" << std::endl;
+            out << "    return 1;" << std::endl;
+            out << "};" << std::endl;
         }
+        out << "#define " << cls->prefix << "_GetSet_GENERATED \\" << std::endl;
+        auto existing_properties = std::set<string>();
 
+        for (auto property: cls->properties /* inherit_props(cls)*/)
+        {
+            out << "{\"" << property.name << "\", (getter)";
+            fun_name(out, cls->prefix, "get", property.name) << ", NULL, NULL}, \\" << std::endl;
+        }
 
         out << std::endl;
+        if (!cls->is_abstract)
+        {
+            out << "static inline void " << cls->prefix << "_Dealloc_GENERATED(" << tonopo(cls->object_name) << " *self)" << std::endl;
 
+            out << "{" << std::endl;
+            for (auto property: inherit_props(cls))
+            {
+                if (!property.is_virtual)
+                { out << "    Py_XDECREF(((" << property.owner->object_name << " *)self)->" << property.accessor << ");" << std::endl; }
+
+            }
+            out << "}" << std::endl;
+            out << "static void ";
+            fun_name(out, cls->prefix, "dealloc", string("")) << "(" << cls->object_name << " *self)" << std::endl;
+            out << "{" << std::endl;
+            out << "    " << cls->prefix << "_Dealloc_GENERATED(self);" << std::endl;
+            out << "    Py_TYPE(self)->tp_free(self);" << std::endl;
+            out << "}" << std::endl;
+            out << "#define " << cls->prefix << "_Dealloc (";
+            fun_name(out, cls->prefix, "dealloc", string("")) << ")" << std::endl;
+
+
+            auto sorted_props = std::vector<inherit_props::PropertyDefWithOwner>();
+            for (auto property: inherit_props(cls))
+            {
+                sorted_props.push_back(property);
+            }
+            std::sort(sorted_props.begin(), sorted_props.end(), [](PropertyDef a, PropertyDef b) { return a.is_optional < b.is_optional; });
+            out << "static inline PyObject *" << cls->prefix << "_Init_GENERATED(" << cls->object_name << " *self, PyObject *dict)" << std::endl;
+            out << "{" << std::endl;
+            out << "    static char const *const kw_names[] = {";
+            for (auto property: sorted_props)
+            {
+                out << "\"" << property.name << "\", ";
+            }
+            out << "NULL};" << std::endl;
+            out << "    static PyObject *virtual_arg_storage;" << std::endl;
+            out << "    PyObject *args = PyTuple_Pack(0);" << std::endl;
+            out << "    if (args == NULL) return NULL;" << std::endl;
+            out << "    if (!PyArg_ParseTupleAndKeywords(args, dict, \"";
+            bool already_optional = false;
+            for (auto property: sorted_props)
+            {
+                if (property.is_optional)
+                {
+                    if (!already_optional)
+                    { out << "|"; }
+                    already_optional = true;
+                }
+                out << "O&";
+            }
+            out << "\", kw_names, ";
+            for (auto property: sorted_props)
+            {
+                fun_name(out, property.owner->prefix, "converter", property.name) << ", ";
+                if (property.is_virtual)
+                { out << "&virtual_arg_storage"; }
+                else
+                { out << "&(((" << property.owner->object_name << " *)self)->" << property.accessor << ")"; }
+                out << ", ";
+            }
+            out << "0))" << std::endl;
+            out << "    { Py_DECREF(args); return NULL; }" << std::endl;
+            out << "    Py_DECREF(args);" << std::endl;
+            out << "    return self;" << std::endl;
+            out << "}" << std::endl;
+            out << "static " << tonopo(cls->object_name) << " *";
+            fun_name(out, cls->prefix, "new", string("_")) << "(PyTypeObject *cls, PyObject *args, PyObject **kwargs)" << std::endl;
+            out << "{" << std::endl;
+            out << "    PyObject *dict = parse_kwargs(args, kwargs);" << std::endl;
+            out << "    if (dict == NULL) return NULL;" << std::endl;
+            out << "    PyObject *self = cls->tp_alloc(cls, 0);" << std::endl;
+            out << "    if (self == NULL) return NULL;" << std::endl;
+            out << "    if (" << cls->prefix << "_Init_GENERATED(self, dict) == NULL)" << std::endl;
+            out << "    { Py_DECREF(self); return NULL; }" << std::endl;
+            out << "    return self;" << std::endl;
+            out << "}" << std::endl;
+            out << "#define " << cls->prefix << "_New (";
+            fun_name(out, cls->prefix, "new", string("_")) << ")" << std::endl;
+        }
     }
 }
+
 
 int main(int argc, char const *argv[])
 {

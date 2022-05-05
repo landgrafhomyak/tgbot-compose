@@ -29,22 +29,27 @@ typedef struct BotUser_Object
 
 typedef struct BotSelfUser_Object
 {
-    BotUser_Object common;
+    BotUser_Object bot;
     PyObject *const can_join_groups;
     PyObject *const can_read_all_group_messages;
     PyObject *const supports_inline_queries;
 } BotSelfUser_Object;
 
+static PyTypeObject User_Type;
+static PyTypeObject RealUser_Type;
+static PyTypeObject BotUser_Type;
+static PyTypeObject BotSelfUser_Type;
+
+#include "User.inc"
+
 static User_Object *User_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs);
 
 static void User_Dealloc(User_Object *self);
 
-static PyObject *User_GetIsBot(User_Object *self, void *closure);
-
 static PyObject *User_GetFullName(User_Object *self, void *closure);
 
 static PyGetSetDef User_GetSet[] = {
-        {"is_bot",    (getter) User_GetIsBot,    NULL},
+        User_GetSet_GENERATED
         {"full_name", (getter) User_GetFullName, NULL},
         {NULL}
 };
@@ -58,20 +63,15 @@ static PyTypeObject User_Type = {
         .tp_dealloc = (destructor) User_Dealloc,
 };
 
-
-static Property_Object User_Meta[] = {
-        Property_SInit("id", 0, 0, offsetof(User_Object, id), NULL),
-        Property_SInit("first_name", 0, 0, offsetof(User_Object, first_name), NULL),
-        Property_SInit("username", 0, 1, offsetof(User_Object, username), NULL),
-        Property_ListEnd
-};
-
-
-static RealUser_Object *RealUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs);
-
-static void RealUser_Dealloc(RealUser_Object *self);
-
 static PyObject *RealUser_Repr(RealUser_Object *self);
+
+static PyObject *RealUser_GetFullName(User_Object *self, void *closure);
+
+static PyGetSetDef RealUser_GetSet[] = {
+        RealUser_GetSet_GENERATED
+        {"full_name", (getter) RealUser_GetFullName, NULL},
+        {NULL}
+};
 
 static PyTypeObject RealUser_Type = {
         PyVarObject_HEAD_INIT(NULL, 0)
@@ -80,22 +80,19 @@ static PyTypeObject RealUser_Type = {
         .tp_new = (newfunc) RealUser_New,
         .tp_dealloc = (destructor) RealUser_Dealloc,
         .tp_base = &User_Type,
-        .tp_repr = (reprfunc) RealUser_Repr
+        .tp_repr = (reprfunc) RealUser_Repr,
+        .tp_getset = RealUser_GetSet
 };
-
-static Property_Object RealUser_Meta[] = {
-        Property_SInit("last_name", 0, 1, offsetof(RealUser_Object, last_name), NULL),
-        Property_SInit("language_code", 0, 0, offsetof(RealUser_Object, language_code), NULL),
-        Property_ListEnd
-};
-
-
-static BotUser_Object *BotUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs);
-
-static void BotUser_Dealloc(BotUser_Object *self);
 
 static PyObject *BotUser_Repr(BotUser_Object *self);
 
+static PyObject *BotUser_GetFullName(User_Object *self, void *closure);
+
+static PyGetSetDef BotUser_GetSet[] = {
+        BotUser_GetSet_GENERATED
+        {"full_name", (getter) BotUser_GetFullName, NULL},
+        {NULL}
+};
 
 static PyTypeObject BotUser_Type = {
         PyVarObject_HEAD_INIT(NULL, 0)
@@ -104,20 +101,16 @@ static PyTypeObject BotUser_Type = {
         .tp_new = (newfunc) BotUser_New,
         .tp_dealloc = (destructor) BotUser_Dealloc,
         .tp_base = &User_Type,
-        .tp_repr = (reprfunc) &BotUser_Repr
+        .tp_repr = (reprfunc) &BotUser_Repr,
+        .tp_getset = BotUser_GetSet
 };
-
-static Property_Object BotUser_Meta[] = {
-        Property_SInit("username", 0, 0, offsetof(BotUser_Object, common.username), NULL),
-        Property_ListEnd
-};
-
-static BotUser_Object *BotSelfUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs);
-
-static void BotSelfUser_Dealloc(BotSelfUser_Object *self);
 
 static PyObject *BotSelfUser_Repr(BotSelfUser_Object *self);
 
+static PyGetSetDef BotSelfUser_GetSet[] = {
+        BotSelfUser_GetSet_GENERATED
+        {NULL}
+};
 static PyTypeObject BotSelfUser_Type = {
         PyVarObject_HEAD_INIT(NULL, 0)
         .tp_name = "tgbot_compose.api_types.BotSelfUser",
@@ -125,20 +118,8 @@ static PyTypeObject BotSelfUser_Type = {
         .tp_new = (newfunc) BotSelfUser_New,
         .tp_dealloc = (destructor) BotSelfUser_Dealloc,
         .tp_base = &BotUser_Type,
-        .tp_repr = (reprfunc) BotSelfUser_Repr
-};
-
-
-static Property_Object BotSelfUser_Meta[] = {
-        Property_SInit("can_join_groups", 0, 0, offsetof(BotSelfUser_Object, can_join_groups), NULL),
-        Property_SInit("can_read_all_group_messages", 0, 0, offsetof(BotSelfUser_Object, can_read_all_group_messages), NULL),
-        Property_SInit("supports_inline_queries", 0, 0, offsetof(BotSelfUser_Object, supports_inline_queries), NULL),
-        Property_ListEnd
-};
-
-static char const *const ignore_names[] = {
-        "is_bot",
-        NULL
+        .tp_repr = (reprfunc) BotSelfUser_Repr,
+        .tp_getset = BotSelfUser_GetSet
 };
 
 static inline PyObject *check_is_bot(PyTypeObject *cls, PyObject *data, PyObject *expected)
@@ -171,26 +152,22 @@ static inline PyObject *check_is_bot(PyTypeObject *cls, PyObject *data, PyObject
     return is_bot;
 }
 
-static RealUser_Object *RealUser_Create(PyObject *data);
-
-static BotUser_Object *BotUser_Create(PyObject *data);
-
 static User_Object *User_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
 {
     PyObject *is_bot;
 
-    ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
-
-    ifNullRet(is_bot = check_is_bot(&User_Type, kwargs, NULL));
-
-    if (parsePyBool(is_bot))
-    {
-        return (User_Object *) BotUser_Create(kwargs);
-    }
-    else
-    {
-        return (User_Object *) RealUser_Create(kwargs);
-    }
+//    ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
+//
+//    ifNullRet(is_bot = check_is_bot(&User_Type, kwargs, NULL));
+//
+//    if (parsePyBool(is_bot))
+//    {
+//        return (User_Object *) BotUser_Create(kwargs);
+//    }
+//    else
+//    {
+//        return (User_Object *) RealUser_Create(kwargs);
+//    }
 }
 
 static void User_Dealloc(User_Object *self)
@@ -233,40 +210,8 @@ static PyObject *User_GetFullName(User_Object *self, void *closure)
     }
     else
     {
-        ifNull(((RealUser_Object *) self)->last_name)
-        {
-            return Py_NewRef(self->first_name);
-        }
-        else
-        {
-            return PyUnicode_FromFormat("%s %s", self->first_name, ((RealUser_Object *) self)->last_name);
-        }
+        return RealUser_GetFullName(self, closure);
     }
-}
-
-static RealUser_Object *RealUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
-{
-    ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
-
-    ifNullRet(check_is_bot(&RealUser_Type, kwargs, Py_False));
-
-    return RealUser_Create(kwargs);
-}
-
-
-static RealUser_Object *RealUser_Create(PyObject *data)
-{
-    return (RealUser_Object *) Parse_DictToProperties(data, ignore_names, &RealUser_Type, 0, 2, User_Meta, RealUser_Meta);
-}
-
-static void RealUser_Dealloc(RealUser_Object *self)
-{
-    Py_XDECREF(self->common.id);
-    Py_XDECREF(self->common.first_name);
-    Py_XDECREF(self->common.username);
-    Py_XDECREF(self->last_name);
-    Py_XDECREF(self->language_code);
-    Py_TYPE(self)->tp_free(self);
 }
 
 static PyObject *RealUser_Repr(RealUser_Object *self)
@@ -290,28 +235,16 @@ static PyObject *RealUser_Repr(RealUser_Object *self)
     return repr;
 }
 
-
-static BotUser_Object *BotUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
+static PyObject *RealUser_GetFullName(User_Object *self, void *closure)
 {
-    ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
-
-    ifNullRet(check_is_bot(&BotUser_Type, kwargs, Py_False));
-
-    return BotUser_Create(kwargs);
-}
-
-static BotUser_Object *BotUser_Create(PyObject *data)
-{
-    return (BotUser_Object *) Parse_DictToProperties(data, ignore_names, &BotUser_Type, 0, 2, User_Meta, BotUser_Meta);
-}
-
-
-static void BotUser_Dealloc(BotUser_Object *self)
-{
-    Py_XDECREF(self->common.id);
-    Py_XDECREF(self->common.first_name);
-    Py_XDECREF(self->common.username);
-    Py_TYPE(self)->tp_free(self);
+    ifNull(((RealUser_Object *) self)->last_name)
+    {
+        return Py_NewRef(self->first_name);
+    }
+    else
+    {
+        return PyUnicode_FromFormat("%s %s", self->first_name, ((RealUser_Object *) self)->last_name);
+    }
 }
 
 static PyObject *BotUser_Repr(BotUser_Object *self)
@@ -325,35 +258,19 @@ static PyObject *BotUser_Repr(BotUser_Object *self)
     );
 }
 
-static BotUser_Object *BotSelfUser_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
+static PyObject *BotUser_GetFullName(User_Object *self, void *closure)
 {
-    ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
-
-    ifNullRet(check_is_bot(&BotSelfUser_Type, kwargs, Py_False));
-
-    return (BotUser_Object *) Parse_DictToProperties(kwargs, ignore_names, &BotSelfUser_Type, 0, 3, User_Meta, BotUser_Meta, BotSelfUser_Meta);
+    return Py_NewRef(self->first_name);
 }
-
-static void BotSelfUser_Dealloc(BotSelfUser_Object *self)
-{
-    Py_XDECREF(self->common.common.id);
-    Py_XDECREF(self->common.common.first_name);
-    Py_XDECREF(self->common.common.username);
-    Py_XDECREF(self->supports_inline_queries);
-    Py_XDECREF(self->can_join_groups);
-    Py_XDECREF(self->can_read_all_group_messages);
-    Py_TYPE(self)->tp_free(self);
-}
-
 
 static PyObject *BotSelfUser_Repr(BotSelfUser_Object *self)
 {
     return PyUnicode_FromFormat(
             "<%s object id=%S username=%U name=%R%s%s%s>",
             RealUser_Type.tp_name,
-            self->common.common.id,
-            self->common.common.username,
-            self->common.common.first_name,
+            self->bot.common.id,
+            self->bot.common.username,
+            self->bot.common.first_name,
             (parsePyBool(self->can_join_groups) ? " in groups" : ""),
             (parsePyBool(self->can_read_all_group_messages) ? " can read all" : ""),
             (parsePyBool(self->supports_inline_queries) ? " with inline" : "")
@@ -362,24 +279,6 @@ static PyObject *BotSelfUser_Repr(BotSelfUser_Object *self)
 
 FileInitFunction(User)
 {
-    Property_RInit(User_Type, User_Meta, 0, PyLong_Type);
-    Property_RInit(User_Type, User_Meta, 1, PyUnicode_Type);
-    Property_RInit(User_Type, User_Meta, 2, PyUnicode_Type);
-
-    Property_RInit(RealUser_Type, RealUser_Meta, 0, PyUnicode_Type);
-    Property_RInit(RealUser_Type, RealUser_Meta, 1, PyUnicode_Type);
-
-    Property_RInit(BotUser_Type, BotUser_Meta, 0, PyUnicode_Type);
-
-    Property_RInit(BotSelfUser_Type, BotSelfUser_Meta, 0, PyBool_Type);
-    Property_RInit(BotSelfUser_Type, BotSelfUser_Meta, 1, PyBool_Type);
-    Property_RInit(BotSelfUser_Type, BotSelfUser_Meta, 2, PyBool_Type);
-
-    clsProps(User_Type, User_Meta);
-    clsProps(RealUser_Type, RealUser_Meta);
-    clsProps(BotUser_Type, BotUser_Meta);
-    clsProps(BotSelfUser_Type, BotSelfUser_Meta);
-
     apiType(User_Type);
 
     chkType(User_Type);
