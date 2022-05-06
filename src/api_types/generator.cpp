@@ -76,6 +76,7 @@ static inline size_t pdiff(T const *lo, T const *hi)
 
 class MacroDef
 {
+public:
     const string name;
     const string args;
     const string definition;
@@ -103,7 +104,7 @@ public:
     bool is_virtual;
     bool is_optional;
     string object_name;
-    string validator;
+    string converter;
     string getter;
 
     inline PropertyDef(
@@ -122,7 +123,7 @@ public:
             is_virtual(is_virtual),
             is_optional(is_optional),
             object_name(object_name),
-            validator(validator),
+            converter(validator),
             getter(getter)
     {}
 };
@@ -298,9 +299,41 @@ private:
     }
 
 
-    inline bool isEnd()
+    inline bool isEnd() noexcept
     {
         return *(this->p) == 0;
+    }
+
+    inline string get_macro_args() noexcept
+    {
+        char const *start = this->p;
+        if (!this->assert_keyword("("))
+        { return string(nullptr); }
+        while (*(this->p++) != ')')
+        {}
+        return string(start, pdiff(start, this->p));
+    }
+
+    inline string get_macro_body()
+    {
+        char const *start = this->p;
+        char c;
+        while (true)
+        {
+            switch (c = *this->p++)
+            {
+                case 0:
+                case '\n':
+                    goto EXIT_LOOP;
+                case '\\':
+                    if (*this->p != '\n')
+                    { this->error("Missed newline after wrap in macro"); }
+                    this->p++;
+                    break;
+            }
+        }
+        EXIT_LOOP:
+        return string(start, pdiff(start, this->p));
     }
 
 public:
@@ -316,7 +349,7 @@ Definitions parse(char const *source)
     auto classes = std::vector<ClassDef const *>();
     bool is_preprocessor_section_used = false;
 
-    while (true)
+    while (!t.isEnd())
     {
         size_t wsc = t.skip_whitespaces();
 
@@ -337,21 +370,25 @@ Definitions parse(char const *source)
         if (t.assert_keyword("include"))
         {
             if (t.assert_keyword(" "))
-            {
-                t.error("Missed whitespace before include file path");
-            }
+            { t.error("Missed whitespace before include file path"); }
+            continue;
         }
         if (t.assert_keyword("define"))
-        {}
-        t.error("Unexpected preprocessor directive");
-
-        next:
-        if (!t.assert_keyword("\n"))
         {
-            t.error("Missed newline after preprocessor declaration");
+            if (!t.assert_keyword(" "))
+            { t.error("Missed whitespace after 'define' keyword"); }
+            string name = t.get_symbol();
+            string args = t.get_macro_args();
+            if (!t.assert_keyword(" "))
+            { t.error("Missed whitespace after macro signature"); }
+            string body = t.get_macro_body();
+            macros.emplace_back(name, args, body);
+            continue;
         }
-
+        t.error("Unexpected preprocessor directive");
     }
+    if (!t.assert_keyword("\n"))
+    { t.error("Missed newline after preprocessor section"); }
 
     while (!t.isEnd())
     {
@@ -573,10 +610,17 @@ static void generate(Definitions const &defs, std::ostream &out)
     {
         out << "#include " << include.path << std::endl;
     }
-    for (auto macro: defs.macros)
-    {}
 
     out << "#include \"serialization.h\"" << std::endl;
+    out << "#define converter_success (1)" << std::endl;
+    out << "#define converter_failed (0)" << std::endl;
+    out << "#define converter_with_cleanup (Py_CLEANUP_SUPPORTED)" << std::endl;
+
+    for (auto macro: defs.macros)
+    {
+        out << "#define " << macro.name << macro.args << " " << macro.definition << std::endl;
+    }
+
 
     for (auto cls: defs.classes)
     {
@@ -593,7 +637,7 @@ static void generate(Definitions const &defs, std::ostream &out)
             else
             {
                 out << "{" << std::endl;
-                out << "    PyObject const *value = (PyObject const *)(((uintptr_t)self) + offsetof(" << tonopo(cls->object_name) << ", " << property.accessor << "));" << std::endl;
+                out << "    PyObject const *value = *(PyObject const **)(((uintptr_t)self) + offsetof(" << tonopo(cls->object_name) << ", " << property.accessor << "));" << std::endl;
                 out << "    if (value == NULL)" << std::endl;
                 if (property.is_optional)
                 { out << "        Py_RETURN_NONE;" << std::endl; }
@@ -609,29 +653,45 @@ static void generate(Definitions const &defs, std::ostream &out)
                 out << "}" << std::endl;
             }
             out << "static inline int ";
-            fun_name(out, cls->prefix, "check", property.name) << "(" << tonopo(property.object_name) << " const * value)" << std::endl;
-            if (!property.validator.isNull())
-            { out << "{" << property.validator << "}" << std::endl; }
+            fun_name(out, cls->prefix, "converter", property.name) << "(" << tonopo(property.object_name) << " const * value, " << tonopo(property.object_name) << " **storage)" << std::endl;
+            if (!property.converter.isNull())
+            { out << "{" << property.converter << "}" << std::endl; }
             else
             {
                 out << "{" << std::endl;
-                out << "    return PyType_IsSubtype(Py_TYPE(value), &" << property.type_name << ");" << std::endl;
+                out << "    if (value == NULL)" << std::endl;
+                out << "    {" << std::endl;
+                out << "        Py_XDECREF(*storage);" << std::endl;
+                out << "        return 1;" << std::endl;
+                out << "    }" << std::endl;
+                if (property.is_optional)
+                {
+                    out << "    if (value == Py_None)" << std::endl;
+                    out << "    {" << std::endl;
+                    if (!property.is_virtual)
+                    { out << "        *storage = NULL;" << std::endl; }
+                    out << "        return 1;" << std::endl;
+                    out << "    }" << std::endl;
+                    out << "    else ";
+                }
+                else
+                { out << "    "; }
+                out << "if (PyType_IsSubtype(Py_TYPE(value), &" << property.type_name << "))" << std::endl;
+                out << "    {" << std::endl;
+                if (!property.is_virtual)
+                {
+                    out << "        *storage = Py_NewRef(value);" << std::endl;
+                    out << "        return Py_CLEANUP_SUPPORTED;" << std::endl;
+                }
+                else
+                {
+                    out << "        return 1;" << std::endl;
+                }
+                out << "    }" << std::endl;
+                out << "    PyErr_Format(PyExc_TypeError, \"`" << property.name << "` must be `%s` or its subclass, got `%s`\", " << property.type_name << ".tp_name, Py_TYPE(value)->tp_name);" << std::endl;
+                out << "    return 0;" << std::endl;
                 out << "}" << std::endl;
             }
-            out << "static int ";
-            fun_name(out, cls->prefix, "converter", property.name) << "(" << tonopo(property.object_name) << " const * value, " << tonopo(property.object_name) << " **storage)" << std::endl;
-            out << "{" << std::endl;
-            out << "    if (value == NULL)" << std::endl;
-            out << "    { Py_DECREF(*storage); return 1; }" << std::endl;
-            out << "    if (!";
-            fun_name(out, cls->prefix, "check", property.name) << "(value))" << std::endl;
-            out << "    {" << std::endl;
-            out << "        PyErr_Format(PyExc_TypeError, \"`" << property.name << "` must be `%s` or its subclass, got `%s`\", " << property.type_name << ".tp_name, Py_TYPE(value)->tp_name);" << std::endl;
-            out << "        return 0;" << std::endl;
-            out << "    }" << std::endl;
-            out << "    *storage = Py_NewRef(value);" << std::endl;
-            out << "    return 1;" << std::endl;
-            out << "};" << std::endl;
         }
         out << "#define " << cls->prefix << "_GetSet_GENERATED \\" << std::endl;
         auto existing_properties = std::set<string>();
@@ -723,6 +783,15 @@ static void generate(Definitions const &defs, std::ostream &out)
             out << "#define " << cls->prefix << "_New (";
             fun_name(out, cls->prefix, "new", string("_")) << ")" << std::endl;
         }
+    }
+    out << "#undef converter_successful" << std::endl;
+    out << "#undef converter_failed" << std::endl;
+    out << "#undef converter_with_cleanup" << std::endl;
+
+
+    for (auto macro: defs.macros)
+    {
+        out << "#undef " << macro.name << std::endl;
     }
 }
 
