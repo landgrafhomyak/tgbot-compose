@@ -154,7 +154,21 @@ static inline PyObject *check_is_bot(PyTypeObject *cls, PyObject *data, PyObject
 
 static User_Object *User_New(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
 {
-    PyObject *is_bot;
+    PyObject *dict = parse_kwargs(args, kwargs);
+    if (dict == NULL)
+    {
+        return NULL;
+    }
+
+    PyObject *is_bot = PyDict_GetItemString(dict, "is_bot");
+    if (is_bot == NULL)
+    {
+        PyErr_Format(PyExc_TypeError, "member `is_bot` was not passed");
+        return NULL;
+    }
+
+    PyObject *self;
+    if (parsePyBool())
 
 //    ifNullRet(kwargs = Parse_ArgsKwargsToDict(args, kwargs));
 //
