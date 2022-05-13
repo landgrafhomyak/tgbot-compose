@@ -3,7 +3,7 @@ from platform import python_implementation
 kwargs = dict(
     name="tgbot_compose",
     packages=["tgbot_compose"],
-    package_data={"tgbot_compose": ["py.typed", "api_types.pyi", "meta.pyi"]},
+    package_data={"tgbot_compose": ["py.typed", "meta.pyi"]},
     package_dir={"tgbot_compose": "src"},
     ext_package="tgbot_compose"
 )
