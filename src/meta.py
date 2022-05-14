@@ -1,5 +1,6 @@
 from asyncio import AbstractEventLoop
 from collections.abc import Mapping, Iterable
+import inspect
 from typing import Type, Any, NoReturn
 import warnings
 
@@ -70,30 +71,94 @@ def _calc_mro(*bases: tuple["component"]) -> tuple["component", ...]:
     return tuple(c for c, l in sorted(concurrent.items(), key=lambda t: len(t[1])))
 
 
-class _component_super_layer:
-    __slots__ = "__component", "__bot", "__imports", "__fields"
+_default_value = object()
 
-    def __new__(cls: Type["_component_instance"], __component: "component", __bot: "bot_instance", __imports: dict[str, "_bound_exported_symbol"], /) -> "_component_instance":
-        self: "_component_instance" = super(_component_instance, cls).__new__(cls, __component, __bot, __imports)
-        cls.__fields.__set__(self, dict())
+
+class _component_super_layer:
+    __slots__ = "__component", "__table"
+
+    __component: "component"
+    __table: dict[str, "_bound_exported_symbol"]
+
+    def __new__(cls: Type["_component_super_layer"], __component: "component", __table: dict[str, "_bound_exported_symbol"], /) -> "_component_super_layer":
+        self: "_component_super_layer" = super(_component_super_layer, cls).__new__(cls)
+        _component_super_layer.__component.__set__(self, __component)
+        _component_super_layer.__table.__set__(self, __table)
         return self
 
-    new = __new__
+    def __getattribute__(self: "_component_super_layer", item: str, /) -> Any:
+        if type(item) is not str:
+            raise TypeError(f"Attribute name must be str, got {type(item).__qualname__ !r}")
 
-    def __new__(cls: Type["_component_super_layer"], __component: "component", __bot: "bot_instance", __imports: dict[str, "_bound_exported_symbol"], /) -> "_component_super_layer":
-        self: "_component_super_layer" = super(_component_super_layer, cls).__new__(cls)
-        cls.__component.__set__(self, __component)
-        cls.__bot.__set__(self, __bot)
-        cls.__imports.__set__(self, __imports)
+        i: dict[str, "_bound_exported_symbol"] = _component_super_layer.__table.__get__(self)
+
+        try:
+            s: "_bound_exported_symbol" = i[item]
+        except KeyError:
+            return AttributeError
+        else:
+            return s._get()
+
+    def __setattr__(self: "_component_super_layer", key: str, value: Any, /) -> None:
+        if type(key) is not str:
+            raise TypeError(f"Attribute name must be str, got {type(key).__qualname__ !r}")
+
+        i: dict[str, "_bound_exported_symbol"] = _component_super_layer.__table.__get__(self)
+
+        try:
+            s: "_bound_exported_symbol" = i[key]
+        except KeyError:
+            raise AttributeError(key)
+        else:
+            return s._set(value)
+
+    def __delattr__(self: "_component_super_layer", name: str, /) -> None:
+        if type(name) is not str:
+            raise TypeError(f"Attribute name must be str, got {type(name).__qualname__ !r}")
+
+        i: dict[str, "_bound_exported_symbol"] = _component_super_layer.__table.__get__(self)
+
+        try:
+            s: "_bound_exported_symbol" = i[name]
+        except KeyError:
+            raise AttributeError(name)
+        else:
+            return s._del()
+
+    def __repr__(self: "_component_super_layer", /) -> str:
+        return f"<super layer of component {_component_super_layer.__component.__get__(self).__qualname__ !r} at 0x{hex(id(self))[2:].zfill(16)}>"
+
+    def get_component(self: "_component_super_layer", /) -> "component":
+        return _component_super_layer.__component.__get__(self)
+
+
+_component_super_layer_get_component = _component_super_layer.get_component
+del _component_super_layer.get_component
+
+
+class _component_instance:
+    __slots__ = "__component", "__fields", "__bot", "__super"
+
+    __component: "component"
+    __fields: dict[str, type]
+    __bot: "_bot_instance"
+    __super: _component_super_layer
+
+    def __new__(cls: Type["_component_instance"], __component: "component", __bot: "_bot_instance", __imports: dict[str, "_bound_exported_symbol"], /) -> "_component_instance":
+        self: "_component_instance" = super(_component_instance, cls).__new__(cls)
+        _component_instance.__component.__set__(self, __component)
+        _component_instance.__fields.__set__(self, dict())
+        _component_instance.__bot.__set__(self, __bot)
+        _component_instance.__super.__set__(self, _component_super_layer(__component, __imports))
         return self
 
     def __getattribute__(self: "_component_instance", item: str, /) -> Any:
         if type(item) is not str:
             raise TypeError(f"Attribute name must be str, got {type(item).__qualname__ !r}")
 
-        c: "component" = _component_super_layer.__component.__get__(self)
-        f: dict[str, Any] = _component_super_layer.__fields.__get__(self)
-        e: dict[str, "_bound_exported_symbol"] = _component_super_layer.__bot.__get__(self)._export_table
+        c: "component" = _component_instance.__component.__get__(self)
+        f: dict[str, Any] = _component_instance.__fields.__get__(self)
+        e: dict[str, "_bound_exported_symbol"] = _component_instance.__bot.__get__(self)._export_table
 
         if item == "__class__":
             return _component_instance
@@ -109,28 +174,13 @@ class _component_super_layer:
         else:
             raise AttributeError(item)
 
-    getattribute = __getattribute__
-
-    def __getattribute__(self: "_component_super_layer", item: str, /) -> Any:
-        if type(item) is not str:
-            raise TypeError(f"Attribute name must be str, got {type(item).__qualname__ !r}")
-
-        i: dict[str, "_bound_exported_symbol"] = _component_super_layer.__imports.__get__(self)
-
-        try:
-            s: "_bound_exported_symbol" = i[item]
-        except KeyError:
-            return AttributeError
-        else:
-            return s._get()
-
     def __setattr__(self: "_component_instance", key: str, value: Any, /) -> None:
         if type(key) is not str:
             raise TypeError(f"Attribute name must be str, got {type(key).__qualname__ !r}")
 
-        c: "component" = _component_super_layer.__component.__get__(self)
-        f: dict[str, Any] = _component_super_layer.__fields.__get__(self)
-        e: dict[str, "_bound_exported_symbol"] = _component_super_layer.__bot.__get__(self)._export_table
+        c: "component" = _component_instance.__component.__get__(self)
+        f: dict[str, Any] = _component_instance.__fields.__get__(self)
+        e: dict[str, "_bound_exported_symbol"] = _component_instance.__bot.__get__(self)._export_table
 
         if key in c._fields:
             if not isinstance(value, c._fields[key]):
@@ -146,27 +196,12 @@ class _component_super_layer:
         else:
             raise AttributeError(key)
 
-    setattr = __setattr__
-
-    def __setattr__(self: "_component_super_layer", key: str, value: Any, /) -> None:
-        if type(key) is not str:
-            raise TypeError(f"Attribute name must be str, got {type(key).__qualname__ !r}")
-
-        i: dict[str, "_bound_exported_symbol"] = _component_super_layer.__imports.__get__(self)
-
-        try:
-            s: "_bound_exported_symbol" = i[key]
-        except KeyError:
-            raise AttributeError(key)
-        else:
-            return s._set(value)
-
     def __delattr__(self: "_component_instance", name: str, /) -> None:
         if type(name) is not str:
             raise TypeError(f"Attribute name must be str, got {type(name).__qualname__ !r}")
 
-        c: "component" = _component_super_layer.__component.__get__(self)
-        e: dict[str, "_bound_exported_symbol"] = _component_super_layer.__bot.__get__(self)._export_table
+        c: "component" = _component_instance.__component.__get__(self)
+        e: dict[str, "_bound_exported_symbol"] = _component_instance.__bot.__get__(self)._export_table
 
         if name in c._fields:
             raise TypeError(f"Field {name !r} is not deletable")
@@ -177,48 +212,41 @@ class _component_super_layer:
         else:
             raise AttributeError(name)
 
-    delattr = __delattr__
-
-    def __delattr__(self: "_component_super_layer", name: str, /) -> None:
-        if type(name) is not str:
-            raise TypeError(f"Attribute name must be str, got {type(name).__qualname__ !r}")
-
-        i: dict[str, "_bound_exported_symbol"] = _component_super_layer.__imports.__get__(self)
-
-        try:
-            s: "_bound_exported_symbol" = i[name]
-        except KeyError:
-            raise AttributeError(name)
-        else:
-            return s._del()
-
     def __repr__(self: "_component_instance", /) -> str:
-        return f"<instance of component {_component_super_layer.__component.__get__(self).__qualname__ !r} at 0x{hex(id(self))[2:].zfill(16)}>"
+        return f"<instance of component {_component_instance.__component.__get__(self).__qualname__ !r} at 0x{hex(id(self))[2:].zfill(16)}>"
 
-    repr = __repr__
+    def __instancecheck__(self: "component", instance: "_component_instance", /) -> bool:
+        return type(instance) is _component_instance and _component_instance.__component.__get__(instance) is self
 
-    def __repr__(self: "_component_super_layer", /) -> str:
-        return f"<super layer of component {_component_super_layer.__component.__get__(self).__qualname__ !r} at 0x{hex(id(self))[2:].zfill(16)}>"
+    instancecheck = __instancecheck__
+    del __instancecheck__
+
+    def imports(instance: "_component_instance" = _default_value, /) -> "_component_super_layer":
+        if instance is _default_value:
+            for instance in inspect.currentframe().f_back.f_locals.values():
+                break
+            else:
+                raise RuntimeError("Can't obtain component instance")
+        if type(instance) is not _component_instance:
+            raise TypeError("Component instance has wrong type")
+        return _component_instance.__super.__get__(instance)
+
+    def component_of(instance: _component_super_layer | "_component_instance") -> "component":
+        if type(instance) is _component_super_layer:
+            return _component_super_layer_get_component(instance)
+        elif type(instance) is _component_super_layer:
+            return _component_instance.__component.__get__(instance)
+        else:
+            raise TypeError(f"Can't get component from {type(instance).__qualname__ !r}")
 
 
-class _component_instance(_component_super_layer):
-    __new__ = _component_super_layer.new
-    del _component_super_layer.new
-    __getattribute__ = _component_super_layer.getattribute
-    del _component_super_layer.getattribute
-    __setattr__ = _component_super_layer.setattr
-    del _component_super_layer.setattr
-    __delattr__ = _component_super_layer.delattr
-    del _component_super_layer.delattr
-    __repr__ = _component_super_layer.repr
-    del _component_super_layer.repr
+imports = _component_instance.imports
+del _component_instance.imports
+imports.__qualname__ = f"{__name__}.imports"
 
-
-_component_instance.__new__.__qualname__ = f"{_component_instance.__qualname__}.__new__"
-_component_instance.__getattribute__.__qualname__ = f"{_component_instance.__qualname__}.__getattribute__"
-_component_instance.__setattr__.__qualname__ = f"{_component_instance.__qualname__}.__setattr__"
-_component_instance.__delattr__.__qualname__ = f"{_component_instance.__qualname__}.__delattr__"
-_component_instance.__repr__.__qualname__ = f"{_component_instance.__qualname__}.__repr__"
+component_of = _component_instance.component_of
+del _component_instance.component_of
+component_of.__qualname__ = f"{__name__}.component_of"
 
 
 class _callback:
@@ -331,7 +359,7 @@ class component:
         return self.__name
 
     @property
-    def __dependencies__(self: "component", /) -> tuple["component", ...]:
+    def dependencies(self: "component", /) -> tuple["component", ...]:
         return self.__mro
 
     @property
@@ -364,6 +392,12 @@ class component:
     def _imports(self: "component", /) -> dict[str, "_exported_symbol"]:
         return self.__imports
 
+    __instancecheck__ = _component_instance.instancecheck
+    del _component_instance.instancecheck
+
+
+component.__instancecheck__.__qualname__ = f"{component.__qualname__}.instancecheck"
+
 
 class bot:
     __slots__ = "__component"
@@ -379,7 +413,7 @@ class bot:
             item = (item,)
         if not isinstance(item, Iterable):
             raise TypeError("Components list must be iterable")
-        self = super().__new__(cls)
+        self = super(bot, bot).__new__(cls)
         self.__component = component(f"{cls.__name__}${cls.__next_id}", item, {"__qualname__": f"{cls.__qualname__}${cls.__next_id}"})
         cls.__next_id += 1
         return self
@@ -390,7 +424,7 @@ class bot:
 
     @property
     def components(self: "bot", /) -> tuple["component", ...]:
-        return self.__component.__dependencies__
+        return self.__component.dependencies
 
     @property
     def _exports(self: "bot", /) -> dict[str, "_exported_symbol"]:
@@ -399,15 +433,22 @@ class bot:
     def __repr__(self: "bot", /) -> str:
         return f"<bot type at 0x{hex(id(self))[2:].zfill(16)}>"
 
+    def __instancecheck__(self: "bot", instance: "_bot_instance", /) -> bool:
+        return type(instance) is _bot_instance and instance.type is self
 
-class bot_instance:
-    __slots__ = "__export_table", "__instances"
+
+class _bot_instance:
+    __slots__ = "__export_table", "__instances", "__type", "__loop"
 
     __instances: dict["component", "_component_instance"]
     __export_table: dict[str, "_bound_exported_symbol"]
+    __type: "bot"
+    __loop: AbstractEventLoop
 
-    def instantiate(__meta: "bot", __backend: AbstractBackend = ..., /, *, loop: AbstractEventLoop, **arguments: Any) -> "bot_instance":
-        self = super(bot_instance, bot_instance).__new__(bot_instance)
+    def instantiate(__meta: "bot", __backend: AbstractBackend = ..., /, *, loop: AbstractEventLoop, **arguments: Any) -> "_bot_instance":
+        self = super(_bot_instance, _bot_instance).__new__(_bot_instance)
+        self.__type = __meta
+        self.__loop = loop
         self.__instances = dict()
         for comp in reversed(__meta.components):
             self.__instances[comp] = _component_instance(comp, self, {name: _bound_exported_symbol(self.__instances[ef.owner], ef.__func__) for name, ef in comp._imports.items()})
@@ -426,11 +467,19 @@ class bot_instance:
     del instantiate
 
     @property
-    def _export_table(self: "bot_instance", /) -> dict[str, "_bound_exported_symbol"]:
+    def _export_table(self: "_bot_instance", /) -> dict[str, "_bound_exported_symbol"]:
         return self.__export_table
 
-    def __repr__(self: "bot_instance", /) -> str:
+    def __repr__(self: "_bot_instance", /) -> str:
         return f"<bot instance at 0x{hex(id(self))[2:].zfill(16)}>"
+
+    @property
+    def type(self: "_bot_instance", /) -> bot:
+        return self.__type
+
+    @property
+    def loop(self: "_bot_instance", /) -> AbstractEventLoop:
+        return self.__loop
 
 
 class _bound_exported_symbol:
@@ -466,5 +515,34 @@ class _bound_exported_symbol:
     def __self__(self: "_bound_exported_symbol", /) -> Any:
         return self.__instance
 
-    def __repr__(self: "_bound_exported_symbol", /) -> str:
+    def __repr__(self: "_exported_symbol", /) -> str:
         return f"<bound exported symbol {self.__name !r} of {self.__owner.__qualname__ !r}>"
+
+
+def depends_on(component_or_bot, dependency, /) -> bool:
+    if type(component_or_bot) is component:
+        if type(dependency) is component:
+            return component in component_or_bot.dependencies
+        else:
+            raise TypeError("Dependency is not a component")
+    elif type(component_or_bot) is _component_instance or type(component_or_bot) is _component_super_layer:
+        if type(dependency) is component:
+            return dependency in component_of(component_or_bot).dependencies
+        elif type(dependency) is component:
+            return component_of(dependency) in component_of(component_or_bot).dependencies
+        else:
+            raise TypeError("Dependency is not a component")
+    elif type(component_or_bot) is bot:
+        if type(dependency) is component:
+            return component in bot.components
+        else:
+            raise TypeError("Dependency is not a component")
+    elif type(component_or_bot) is _bot_instance:
+        if type(dependency) is component:
+            return dependency in component_or_bot.type.components
+        elif type(dependency) is component:
+            return component_of(dependency) in component_or_bot.type.components
+        else:
+            raise TypeError("Dependency is not a component")
+    else:
+        raise TypeError("The object under inspecting is not bot or component")
