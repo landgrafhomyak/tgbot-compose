@@ -1,10 +1,13 @@
 from asyncio import AbstractEventLoop
 from collections.abc import Mapping, Iterable
 import inspect
+from types import FunctionType
 from typing import Type, Any, NoReturn
 import warnings
 
 from .backend import AbstractBackend
+
+__all__ = ("component", "bot", "imports", "depends_on", "component_of", "export")
 
 
 class export:
@@ -61,6 +64,43 @@ class _exported_symbol:
     @property
     def __name__(self: "_exported_symbol", /) -> str:
         return self.__name
+
+
+class _bound_exported_symbol:
+    __slots__ = "__instance", "__func"
+
+    __instance: "_component_instance"
+    __func: Any
+
+    def __new__(cls: Type["_bound_exported_symbol"], instance: "_component_instance", func: Any, /) -> "_bound_exported_symbol":
+        self = super(_bound_exported_symbol, cls).__new__(cls)
+        self.__instance = instance
+        self.__func = func
+        return self
+
+    def _get(self: "_bound_exported_symbol", /) -> Any:
+        return self.__func.__get__(self.__instance)
+
+    def _set(self: "_bound_exported_symbol", v: Any) -> None:
+        return self.__func.__set__(self.__instance, v)
+
+    def _del(self: "_bound_exported_symbol", /) -> None:
+        return self.__func.__del__(self.__instance)
+
+    @property
+    def __func__(self: "_bound_exported_symbol", /) -> Any:
+        return self.__func
+
+    @property
+    def __wrapped__(self: "_bound_exported_symbol", /) -> Any:
+        return self.__func
+
+    @property
+    def __self__(self: "_bound_exported_symbol", /) -> Any:
+        return self.__instance
+
+    def __repr__(self: "_exported_symbol", /) -> str:
+        return f"<bound exported symbol {self.__name !r} of {self.__owner.__qualname__ !r}>"
 
 
 def _calc_mro(*bases: tuple["component"]) -> tuple["component", ...]:
@@ -306,6 +346,11 @@ class component:
             if not name.isidentifier():
                 raise TypeError(f"Invalid field name {name !r}")
 
+        _forbidden_symbols = (set(namespace.keys()) | set(fields.keys())) & {"bot", "log", "loop"}
+        if _forbidden_symbols:
+            raise TypeError(f"Symbols {_forbidden_symbols !r} can't be set")
+        del _forbidden_symbols
+
         exports = dict()
         local_dict = dict()
         callbacks = set()
@@ -319,6 +364,11 @@ class component:
                 callbacks.add(member)
             else:
                 local_dict[name] = member
+
+        _forbidden_exports = set(exports.keys()) & {"__init__", "__del__"}
+        if _forbidden_exports:
+            raise TypeError(f"Symbols {_forbidden_exports !r} can't be exported")
+        del _forbidden_exports
 
         for dependency in dependencies:
             if not type(dependency) is component:
@@ -437,34 +487,49 @@ class bot:
         return type(instance) is _bot_instance and instance.type is self
 
 
+async def _run_awaitable(__function_or_coro: FunctionType, *__args: Any, **__kwargs: Any):
+    if inspect.iscoroutinefunction(__function_or_coro) or hasattr(__function_or_coro, "__call__") and inspect.iscoroutinefunction(__function_or_coro.__call__):
+        await __function_or_coro(*__args, **__kwargs)
+    else:
+        __function_or_coro(*__args, **__kwargs)
+
+
 class _bot_instance:
-    __slots__ = "__export_table", "__instances", "__type", "__loop"
+    __slots__ = "__export_table", "__instances", "__type", "__loop", "__globals"
 
     __instances: dict["component", "_component_instance"]
     __export_table: dict[str, "_bound_exported_symbol"]
     __type: "bot"
     __loop: AbstractEventLoop
+    __globals: "_bot_globals"
 
-    def instantiate(__meta: "bot", __backend: AbstractBackend = ..., /, *, loop: AbstractEventLoop, **arguments: Any) -> "_bot_instance":
+    async def instantiate(__meta: "bot", __loop: AbstractEventLoop, __backend: AbstractBackend = ..., /, **arguments: Any) -> "_bot_instance":
         self = super(_bot_instance, _bot_instance).__new__(_bot_instance)
         self.__type = __meta
-        self.__loop = loop
+        self.__loop = __loop
         self.__instances = dict()
         for comp in reversed(__meta.components):
             self.__instances[comp] = _component_instance(comp, self, {name: _bound_exported_symbol(self.__instances[ef.owner], ef.__func__) for name, ef in comp._imports.items()})
         self.__export_table = {name: _bound_exported_symbol(self.__instances[ef.owner], ef.__func__) for name, ef in __meta._exports.items()}
+        self.__globals = _bot_globals(self, self.__export_table)
         for comp in reversed(__meta.components):
             try:
-                init = self.__instances[comp].__init__
+                init = self.__instances[self.__instances[comp]].__init__
             except AttributeError:
-                pass
+                continue
             else:
-                init(loop=loop, **arguments)
+                await _run_awaitable(init, **arguments)
         return self
 
     bot.instantiate = instantiate
     instantiate.__qualname__ = f"{bot.__qualname__}.instantiate"
     del instantiate
+
+    async def shutdown(self: "_bot_instance", /) -> None:
+        raise NotImplemented()
+
+    def __del__(self: "_bot_instance", /):
+        self.__loop.run_until_complete(self.shutdown())
 
     @property
     def _export_table(self: "_bot_instance", /) -> dict[str, "_bound_exported_symbol"]:
@@ -481,42 +546,65 @@ class _bot_instance:
     def loop(self: "_bot_instance", /) -> AbstractEventLoop:
         return self.__loop
 
+    @property
+    def globals(self: "_bot_instance", /):
+        return self.__globals
 
-class _bound_exported_symbol:
-    __slots__ = "__instance", "__func"
 
-    __instance: _component_instance
-    __func: Any
+class _bot_globals:
+    __slots__ = "__exports_table", "__bot_instance"
 
-    def __new__(cls: Type["_bound_exported_symbol"], instance: "_component_instance", func: Any, /) -> "_bound_exported_symbol":
-        self = super(_bound_exported_symbol, cls).__new__(cls)
-        self.__instance = instance
-        self.__func = func
+    __exports_table: dict[str, "_bound_exported_symbol"]
+    __bot_instance: "_bot_instance"
+
+    def __new__(cls: Type["_bot_globals"], __bot: "_bot_instance", __exports_table: dict[str, "_bound_exported_symbol"], /) -> "_bot_globals":
+        self = super(_bot_globals, cls).__new__(cls)
+        _bot_globals.__exports_table.__set__(self, __exports_table)
+        _bot_globals.__bot_instance.__set__(self, __bot)
         return self
 
-    def _get(self: "_bound_exported_symbol", /) -> Any:
-        return self.__func.__get__(self.__instance)
+    def __getattribute__(self: "_bot_globals", item: str, /) -> Any:
+        if type(item) is not str:
+            raise TypeError(f"Attribute name must be str, got {type(item).__qualname__ !r}")
 
-    def _set(self: "_bound_exported_symbol", v: Any) -> None:
-        return self.__func.__set__(self.__instance, v)
+        try:
+            o: "_bound_exported_symbol" = _bot_globals.__exports_table.__get__(self)[item]
+        except KeyError:
+            raise AttributeError(item)
+        else:
+            return o._get()
 
-    def _del(self: "_bound_exported_symbol", /) -> None:
-        return self.__func.__del__(self.__instance)
+    def __setattr__(self: "_bot_globals", key: str, value: Any, /) -> None:
+        if type(key) is not str:
+            raise TypeError(f"Attribute name must be str, got {type(key).__qualname__ !r}")
 
-    @property
-    def __func__(self: "_bound_exported_symbol", /) -> Any:
-        return self.__func
+        try:
+            o: "_bound_exported_symbol" = _bot_globals.__exports_table.__get__(self)[key]
+        except KeyError:
+            raise AttributeError(key)
+        else:
+            return o._set(value)
 
-    @property
-    def __wrapped__(self: "_bound_exported_symbol", /) -> Any:
-        return self.__func
+    def __delattr__(self: "_bot_globals", item: str, /) -> None:
+        if type(item) is not str:
+            raise TypeError(f"Attribute name must be str, got {type(item).__qualname__ !r}")
 
-    @property
-    def __self__(self: "_bound_exported_symbol", /) -> Any:
-        return self.__instance
+        try:
+            o: "_bound_exported_symbol" = _bot_globals.__exports_table.__get__(self)[item]
+        except KeyError:
+            raise AttributeError(item)
+        else:
+            return o._del()
 
-    def __repr__(self: "_exported_symbol", /) -> str:
-        return f"<bound exported symbol {self.__name !r} of {self.__owner.__qualname__ !r}>"
+    def __repr__(self: "_bot_globals", /) -> str:
+        return f"<bot globals at 0x{hex(id(self))[2:].zfill(16)}>"
+
+    def get_bot(self: "_bot_globals", /) -> "_bot_instance":
+        return _bot_globals.__bot_instance.__get__(self)
+
+
+_bot_globals_get_bot = _bot_globals.get_bot
+del _bot_globals.get_bot
 
 
 def depends_on(component_or_bot, dependency, /) -> bool:
@@ -544,5 +632,7 @@ def depends_on(component_or_bot, dependency, /) -> bool:
             return component_of(dependency) in component_or_bot.type.components
         else:
             raise TypeError("Dependency is not a component")
+    elif type(component_or_bot) is _bot_globals:
+        return depends_on(_bot_globals_get_bot(component_or_bot), dependency)
     else:
         raise TypeError("The object under inspecting is not bot or component")
